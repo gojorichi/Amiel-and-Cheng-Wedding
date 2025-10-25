@@ -50,6 +50,7 @@
         let db, auth;
         let allLinks = [];
         const MAX_RETRIES = 5;
+        let isAuthReady = false; // New flag to ensure we only proceed after auth is settled
         
         // Use provided global variables
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
@@ -86,11 +87,16 @@
                     await signInAnonymously(auth);
                 }
 
-                // 3. Wait for Auth State and load photos
+                // 3. Wait for Auth State and set flag
                 onAuthStateChanged(auth, (user) => {
                     if (user) {
+                        isAuthReady = true;
                         statusMessage.textContent = 'Authenticated. Fetching files...';
                         loadPhotos();
+                    } else {
+                        // This case shouldn't happen if the token is valid, but handles potential sign-out
+                        statusMessage.textContent = 'Authentication failed. Please check environment.';
+                        refreshButton.disabled = true;
                     }
                 });
 
@@ -104,7 +110,11 @@
          * Fetches all upload records from the public collection.
          */
         window.loadPhotos = async function() {
-            if (!db) return;
+            // Ensure we are authenticated before attempting Firestore operations
+            if (!db || !isAuthReady) {
+                statusMessage.textContent = 'Waiting for authentication...';
+                return; 
+            }
 
             linksContainer.innerHTML = '';
             linksTextarea.value = '';
@@ -164,7 +174,7 @@
                         statusMessage.textContent = `Failed to fetch records (Attempt ${i + 1}). Retrying...`;
                         await delay(Math.pow(2, i) * 1000); 
                     } else {
-                         statusMessage.textContent = 'ERROR: Failed to load photo records after multiple retries. See console.';
+                         statusMessage.textContent = 'ERROR: Failed to load photo records after multiple retries. Check browser console for network/permission issues.';
                          refreshButton.disabled = false;
                     }
                 }
