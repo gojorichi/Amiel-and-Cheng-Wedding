@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Amiel and Rachel's Wedding</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+    </style>
+</head>
+<body class="bg-gray-100 min-h-screen flex items-center justify-center p-4">
+
+    <!-- Main Container -->
+    <div id="main-interface" class="w-full max-w-md bg-white rounded-xl shadow-2xl p-6 md:p-8 text-center">
+
+        <!-- Camera Icon (Color updated for theme) -->
+        <svg class="mx-auto h-16 w-16 text-rose-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.865-1.531A2 2 0 0110.707 4h2.586a2 2 0 011.664.89l.865 1.531A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
+        </svg>
+        <h1 class="text-3xl font-bold mt-4 text-gray-900" id="prompt-title">Amiel and Rachel's Wedding</h1>
+        
+        <!-- The Initial Prompt Message (Content updated) -->
+        <p class="mt-2 text-lg text-gray-600" id="prompt-message">
+            Thank you so much for attending our wedding, please feel free to capture your images through the use of this QR so that we can see the experiences through your lens. There will be a limit of 15 photos per person.
+        </p>
+
+        <!-- Hidden File Input for Camera Activation -->
+        <input type="file" id="camera-input" class="hidden" accept="image/*, video/*" capture="camera">
+
+        <!-- Action Button (Color updated for theme) -->
+        <button id="start-button" onclick="startCameraProcess()" 
+            class="mt-6 w-full px-6 py-3 border border-transparent text-base font-medium rounded-lg shadow-sm text-white bg-rose-500 hover:bg-rose-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-rose-500 transition duration-150 ease-in-out">
+            Start Camera
+        </button>
+
+        <!-- Status and Result Area (Color updated for theme) -->
+        <div id="status-area" class="mt-6 text-left p-4 bg-rose-50 rounded-lg hidden">
+            <p class="font-semibold text-rose-800 flex justify-between">
+                <span>Upload Status:</span>
+                <span id="upload-counter" class="font-normal text-sm"></span>
+            </p>
+            <p id="upload-status" class="text-rose-700 text-sm mt-1">Ready to capture.</p>
+            <p id="file-info" class="text-xs text-gray-500 mt-2"></p>
+        </div>
+    </div>
+
+    <script>
+        // --- Configuration ---
+        const UPLOAD_LIMIT = 15;
+        // NOTE: This counter is session-based and resets when the page is reloaded. 
+        // For a permanent per-person limit, this counter would need to be stored 
+        // in a persistent database (like Firestore) tied to a user ID.
+        let uploadCount = 0; 
+
+        // --- DOM Elements ---
+        const cameraInput = document.getElementById('camera-input');
+        const startButton = document.getElementById('start-button');
+        const uploadStatus = document.getElementById('upload-status');
+        const statusArea = document.getElementById('status-area');
+        const fileInfo = document.getElementById('file-info');
+        const uploadCounterSpan = document.getElementById('upload-counter');
+
+        // --- Functions ---
+        
+        // Sets up the initial UI state
+        function initializeApp() {
+            updateCounterDisplay();
+        }
+
+        // Updates the counter text
+        function updateCounterDisplay() {
+            uploadCounterSpan.textContent = `(${uploadCount} of ${UPLOAD_LIMIT} uploads)`;
+        }
+
+        // Checks if the limit has been reached and updates UI if true
+        function checkLimitAndTerminate() {
+            if (uploadCount >= UPLOAD_LIMIT) {
+                startButton.disabled = true;
+                startButton.classList.remove('bg-rose-500', 'hover:bg-rose-600');
+                startButton.classList.add('bg-gray-400', 'cursor-not-allowed');
+                startButton.textContent = 'Limit Reached (15 Photos)';
+                uploadStatus.textContent = 'Limit reached. Thank you for sharing your 15 photos with us!';
+                fileInfo.textContent = 'The capture portal is now closed for this session.';
+                return true;
+            }
+            return false;
+        }
+
+        // This function runs when the user clicks the main button
+        function startCameraProcess() {
+            if (checkLimitAndTerminate()) {
+                return; // Stop if limit is already reached
+            }
+
+            if (cameraInput) {
+                statusArea.classList.remove('hidden');
+                uploadStatus.textContent = 'Awaiting file capture from your camera...';
+                
+                // Programmatically click the hidden input to trigger the camera/file picker
+                cameraInput.click();
+            } else {
+                uploadStatus.textContent = 'Error: Camera input element not found.';
+            }
+        }
+
+        // Event listener for when a file is selected (i.e., when the user captures a photo/video)
+        cameraInput.addEventListener('change', (event) => {
+            const file = event.target.files[0];
+            
+            if (checkLimitAndTerminate()) {
+                return;
+            }
+
+            if (file) {
+                fileInfo.textContent = `Captured File: ${file.name} (${(file.size / 1024 / 1024).toFixed(2)} MB, Type: ${file.type})`;
+                uploadStatus.textContent = 'File captured successfully. Starting upload...';
+                startButton.disabled = true;
+                startButton.textContent = 'Uploading...';
+
+                // Simulate the upload function immediately after file is selected
+                uploadFileToDrive(file);
+            } else {
+                uploadStatus.textContent = 'Capture cancelled by user or no file selected.';
+                fileInfo.textContent = '';
+            }
+        });
+
+        // --- IMPORTANT: This function simulates the server/drive upload ---
+        function uploadFileToDrive(file) {
+            // Check limit one last time before simulating the resource consumption
+            if (checkLimitAndTerminate()) {
+                return;
+            }
+            
+            // --- SIMULATION (Replace this block with your actual server/drive API call) ---
+            console.log("Simulating upload of:", file);
+            
+            setTimeout(() => {
+                // Increment the counter upon successful upload
+                uploadCount++; 
+                simulateSuccess();
+            }, 3000); // Simulate a 3-second upload time
+            // -------------------------------------------------------------
+        }
+
+        function simulateSuccess() {
+            updateCounterDisplay();
+            
+            // Check if this was the final upload
+            if (checkLimitAndTerminate()) {
+                return;
+            }
+            
+            uploadStatus.textContent = `✅ Upload ${uploadCount} Complete! Ready for next capture.`;
+            startButton.textContent = 'New Capture';
+            startButton.disabled = false;
+            startButton.onclick = () => {
+                // Reset for a new capture
+                uploadStatus.textContent = 'Ready to capture.';
+                fileInfo.textContent = '';
+                startButton.textContent = 'Start Camera';
+                startButton.onclick = startCameraProcess;
+                // Clear the file input value so 'change' event fires again for the same file
+                cameraInput.value = null; 
+            };
+        }
+
+        function simulateFailure(error = "Unknown error") {
+            uploadStatus.textContent = `❌ Upload Failed: ${error}. Please try again.`;
+            startButton.textContent = 'Try Again';
+            startButton.disabled = false;
+            startButton.onclick = startCameraProcess;
+        }
+        
+        // Initialize the app state when the page loads
+        window.onload = initializeApp;
+
+    </script>
+</body>
+</html>
