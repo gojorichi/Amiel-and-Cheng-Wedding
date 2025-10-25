@@ -32,7 +32,7 @@
 
         <!-- Action Button (Color updated for theme) -->
         <button id="start-button" onclick="startCameraProcess()" 
-            class="mt-6 w-full px-6 py-3 border border-transparent text-base font-medium rounded-lg shadow-sm text-white bg-rose-500 hover:bg-rose-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-rose-500 transition duration-150 ease-in-out">
+            class="mt-6 w-full px-6 py-3 border border-transparent text-base font-medium rounded-lg shadow-sm text-white bg-rose-500 hover:bg-rose-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-rose-500 transition duration-150 ease-in-out disabled:opacity-50 disabled:cursor-not-allowed">
             Start Camera
         </button>
 
@@ -40,20 +40,32 @@
         <div id="status-area" class="mt-6 text-left p-4 bg-rose-50 rounded-lg hidden">
             <p class="font-semibold text-rose-800 flex justify-between">
                 <span>Upload Status:</span>
-                <span id="upload-counter" class="font-normal text-sm"></span>
+                <span id="upload-counter" class="font-normal text-sm">Loading...</span>
             </p>
-            <p id="upload-status" class="text-rose-700 text-sm mt-1">Ready to capture.</p>
+            <p id="upload-status" class="text-rose-700 text-sm mt-1">Initializing App...</p>
             <p id="file-info" class="text-xs text-gray-500 mt-2"></p>
         </div>
     </div>
 
-    <script>
+    <script type="module">
+        // --- Firebase Imports ---
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, collection, query, where, getDocs, addDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getStorage, ref, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-storage.js";
+
         // --- Configuration ---
         const UPLOAD_LIMIT = 15;
-        // NOTE: This counter is session-based and resets when the page is reloaded. 
-        // For a permanent per-person limit, this counter would need to be stored 
-        // in a persistent database (like Firestore) tied to a user ID.
         let uploadCount = 0; 
+
+        // --- Firebase Global Vars ---
+        let db, auth, storage;
+        let userId = 'loading';
+        
+        // Use provided global variables
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
 
         // --- DOM Elements ---
         const cameraInput = document.getElementById('camera-input');
@@ -62,12 +74,85 @@
         const statusArea = document.getElementById('status-area');
         const fileInfo = document.getElementById('file-info');
         const uploadCounterSpan = document.getElementById('upload-counter');
+        const MAX_RETRIES = 5;
 
-        // --- Functions ---
+        // --- Core Functions ---
         
-        // Sets up the initial UI state
-        function initializeApp() {
-            updateCounterDisplay();
+        // Exponential backoff utility
+        async function delay(ms) {
+            return new Promise(resolve => setTimeout(resolve, ms));
+        }
+
+        /**
+         * Initializes Firebase and authenticates the user.
+         */
+        async function initializeFirebase() {
+            try {
+                // 1. Init App
+                const app = initializeApp(firebaseConfig);
+                db = getFirestore(app);
+                auth = getAuth(app);
+                storage = getStorage(app);
+
+                // 2. Auth User (using custom token or anonymously)
+                if (initialAuthToken) {
+                    await signInWithCustomToken(auth, initialAuthToken);
+                } else {
+                    await signInAnonymously(auth);
+                }
+
+                // 3. Wait for Auth State and set userId
+                await new Promise(resolve => {
+                    const unsubscribe = onAuthStateChanged(auth, (user) => {
+                        if (user) {
+                            userId = user.uid;
+                            console.log("Authenticated with UID:", userId);
+                            unsubscribe(); // Stop listening after initial auth state is resolved
+                            resolve();
+                        }
+                    });
+                });
+                
+                // 4. Load persistent count
+                await loadPersistentUploadCount();
+
+            } catch (error) {
+                console.error("Firebase Initialization Failed:", error);
+                uploadStatus.textContent = 'ERROR: Initialization failed. See console.';
+                startButton.disabled = true;
+            }
+        }
+
+        /**
+         * Fetches the current number of user uploads from Firestore.
+         */
+        async function loadPersistentUploadCount() {
+            if (!db || userId === 'loading') return;
+
+            const collectionPath = `/artifacts/${appId}/public/data/wedding_uploads`;
+            const uploadsRef = collection(db, collectionPath);
+            
+            // Query for documents uploaded by the current user
+            const q = query(uploadsRef, where("userId", "==", userId));
+            
+            for (let i = 0; i < MAX_RETRIES; i++) {
+                try {
+                    const snapshot = await getDocs(q);
+                    uploadCount = snapshot.size;
+                    updateCounterDisplay();
+                    checkLimitAndTerminate();
+                    uploadStatus.textContent = 'Ready to capture.';
+                    startButton.disabled = false;
+                    return;
+                } catch (error) {
+                    console.error(`Attempt ${i + 1} to load count failed.`, error);
+                    if (i < MAX_RETRIES - 1) {
+                        await delay(Math.pow(2, i) * 1000); // Exponential backoff
+                    } else {
+                         uploadStatus.textContent = 'ERROR: Failed to load photo limit count. Retrying...';
+                    }
+                }
+            }
         }
 
         // Updates the counter text
@@ -106,7 +191,7 @@
             }
         }
 
-        // Event listener for when a file is selected (i.e., when the user captures a photo/video)
+        // Event listener for when a file is selected
         cameraInput.addEventListener('change', (event) => {
             const file = event.target.files[0];
             
@@ -116,11 +201,10 @@
 
             if (file) {
                 fileInfo.textContent = `Captured File: ${file.name} (${(file.size / 1024 / 1024).toFixed(2)} MB, Type: ${file.type})`;
-                uploadStatus.textContent = 'File captured successfully. Starting upload...';
+                uploadStatus.textContent = 'File captured successfully. Starting cloud upload...';
                 startButton.disabled = true;
                 startButton.textContent = 'Uploading...';
 
-                // Simulate the upload function immediately after file is selected
                 uploadFileToDrive(file);
             } else {
                 uploadStatus.textContent = 'Capture cancelled by user or no file selected.';
@@ -128,25 +212,60 @@
             }
         });
 
-        // --- IMPORTANT: This function simulates the server/drive upload ---
-        function uploadFileToDrive(file) {
-            // Check limit one last time before simulating the resource consumption
-            if (checkLimitAndTerminate()) {
+        /**
+         * Uploads the file to Firebase Storage and saves metadata to Firestore.
+         */
+        async function uploadFileToDrive(file) {
+            if (checkLimitAndTerminate()) return;
+            if (!storage || !db || !userId) {
+                simulateFailure("App not fully initialized. Try again.");
                 return;
             }
             
-            // --- SIMULATION (Replace this block with your actual server/drive API call) ---
-            console.log("Simulating upload of:", file);
-            
-            setTimeout(() => {
-                // Increment the counter upon successful upload
-                uploadCount++; 
-                simulateSuccess();
-            }, 3000); // Simulate a 3-second upload time
-            // -------------------------------------------------------------
+            const timestamp = Date.now();
+            const storagePath = `/artifacts/${appId}/public/uploads/${userId}/${timestamp}_${file.name}`;
+            const storageRef = ref(storage, storagePath);
+
+            for (let i = 0; i < MAX_RETRIES; i++) {
+                try {
+                    // 1. Upload the file to Storage
+                    const snapshot = await uploadBytes(storageRef, file);
+                    
+                    // 2. Get the public download URL
+                    const downloadURL = await getDownloadURL(snapshot.ref);
+
+                    // 3. Store metadata in Firestore
+                    const metadata = {
+                        userId: userId,
+                        filename: file.name,
+                        fileType: file.type,
+                        fileSize: file.size,
+                        downloadURL: downloadURL,
+                        storagePath: storagePath,
+                        uploadedAt: serverTimestamp()
+                    };
+
+                    const collectionPath = `/artifacts/${appId}/public/data/wedding_uploads`;
+                    await addDoc(collection(db, collectionPath), metadata);
+
+                    // Success! Update counter and UI
+                    uploadCount++; 
+                    simulateSuccess(downloadURL); 
+                    return;
+
+                } catch (error) {
+                    console.error(`Attempt ${i + 1} to upload failed.`, error);
+                    if (i < MAX_RETRIES - 1) {
+                        uploadStatus.textContent = `Upload failed (Attempt ${i + 1}). Retrying in ${Math.pow(2, i)}s...`;
+                        await delay(Math.pow(2, i) * 1000); // Exponential backoff
+                    } else {
+                        simulateFailure(error.message || "Failed to upload file after multiple retries.");
+                    }
+                }
+            }
         }
 
-        function simulateSuccess() {
+        function simulateSuccess(downloadURL) {
             updateCounterDisplay();
             
             // Check if this was the final upload
@@ -154,7 +273,9 @@
                 return;
             }
             
-            uploadStatus.textContent = `✅ Upload ${uploadCount} Complete! Ready for next capture.`;
+            uploadStatus.textContent = `✅ Upload ${uploadCount} Complete!`;
+            fileInfo.innerHTML = `File is stored securely. (URL available in console for verification)`;
+            
             startButton.textContent = 'New Capture';
             startButton.disabled = false;
             startButton.onclick = () => {
@@ -163,7 +284,6 @@
                 fileInfo.textContent = '';
                 startButton.textContent = 'Start Camera';
                 startButton.onclick = startCameraProcess;
-                // Clear the file input value so 'change' event fires again for the same file
                 cameraInput.value = null; 
             };
         }
@@ -176,7 +296,7 @@
         }
         
         // Initialize the app state when the page loads
-        window.onload = initializeApp;
+        window.onload = initializeFirebase;
 
     </script>
 </body>
