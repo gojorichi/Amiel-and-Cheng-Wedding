@@ -21,7 +21,7 @@
 
         <p id="status-message" class="text-center text-lg text-rose-600 mb-6">Initializing App...</p>
 
-        <div id="links-container" class="space-y-4">
+        <div id="links-container" class="space-space-y-4">
             <!-- Download links will be inserted here -->
         </div>
         
@@ -50,7 +50,7 @@
         let db, auth;
         let allLinks = [];
         const MAX_RETRIES = 5;
-        let isAuthReady = false; // New flag to ensure we only proceed after auth is settled
+        let isAuthReady = false; 
         
         // Use provided global variables
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
@@ -74,6 +74,23 @@
          * Initializes Firebase and authenticates the user (in this case, the owner).
          */
         async function initializeFirebase() {
+            // --- CRITICAL DEBUGGING CHECK ---
+            console.log("--- DEBUG CONFIG CHECK START ---");
+            const isConfigPresent = Object.keys(firebaseConfig).length > 0;
+            const isTokenPresent = initialAuthToken !== null && initialAuthToken.length > 0;
+            
+            console.log(`[DEBUG] App ID: ${appId}`);
+            console.log(`[DEBUG] Firebase Config Present: ${isConfigPresent}`);
+            console.log(`[DEBUG] Auth Token Present: ${isTokenPresent}`);
+            console.log("--- DEBUG CONFIG CHECK END ---");
+
+            if (!isConfigPresent) {
+                console.error("FATAL: Firebase configuration (__firebase_config) is missing or empty. Cannot proceed.");
+                statusMessage.textContent = 'FATAL ERROR: Configuration missing. Please reload the entire environment.';
+                refreshButton.disabled = true;
+                return;
+            }
+            
             try {
                 // 1. Init App
                 const app = initializeApp(firebaseConfig);
@@ -94,15 +111,16 @@
                         statusMessage.textContent = 'Authenticated. Fetching files...';
                         loadPhotos();
                     } else {
-                        // This case shouldn't happen if the token is valid, but handles potential sign-out
+                        // This case shouldn't happen if the token is valid
                         statusMessage.textContent = 'Authentication failed. Please check environment.';
                         refreshButton.disabled = true;
                     }
                 });
 
             } catch (error) {
-                console.error("Firebase Initialization Failed:", error);
-                statusMessage.textContent = 'ERROR: Initialization failed. See console.';
+                // Log the full error object for detailed troubleshooting
+                console.error("Firebase Initialization Failed (Full Error):", error);
+                statusMessage.textContent = 'ERROR: Initialization failed. See console for full details.';
             }
         }
 
